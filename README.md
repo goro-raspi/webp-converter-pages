@@ -1,14 +1,25 @@
-# webp-converter
+# WebP Converter (React + Vite + pnpm)
 
-PNG/JPEG をブラウザ内で WebP に圧縮する無料ツール。
+PNG/JPEG をブラウザ内で WebP へ圧縮するツール。
 
-## 特徴
-- サーバーアップロードなし（ローカル処理）
+## Features
+- PNG/JPEG → WebP
 - 品質調整（50-95）
 - 長辺リサイズ
-- 複数枚一括変換
+- 複数枚変換 + 個別保存
 - ZIP 一括ダウンロード
+- 画像はローカル処理（サーバー送信なし）
 
-## 開発/公開方針
-- Private リポジトリ: 開発用
-- Public リポジトリ: GitHub Pages 公開用
+## Dev
+```bash
+pnpm install
+pnpm dev
+```
+
+## Build
+```bash
+pnpm build
+```
+
+## Deploy
+GitHub Pages は Actions で `dist/` をデプロイ。
