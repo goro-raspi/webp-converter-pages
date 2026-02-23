@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WebP Compressor</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background:#0b1020; color:#e8ecf3; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 8px; font-size: 1.5rem; }
+    p { color:#b9c3d6; }
+    .card { background:#141b31; border:1px solid #2a365e; border-radius:14px; padding:16px; margin:14px 0; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .drop { border:2px dashed #3e4f85; border-radius:12px; padding:24px; text-align:center; cursor:pointer; }
+    input[type="range"] { width:220px; }
+    button { background:#3f7cff; color:white; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .muted { color:#9ca9c3; font-size:.92rem; }
+    table { width:100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-bottom:1px solid #2a365e; padding:8px; text-align:left; font-size:.92rem; }
+    code { background:#1b2440; padding:2px 6px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PNG/JPEG → WebP 圧縮ツール</h1>
+    <p>画像はブラウザ内で処理されます（アップロード先サーバーなし）。</p>
+
+    <div class="card drop" id="dropzone">
+      <input id="files" type="file" accept="image/png,image/jpeg" multiple hidden />
+      <strong>ここに画像をドラッグ&ドロップ</strong><br>
+      <span class="muted">またはクリックして選択（PNG/JPEG）</span>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label>品質: <strong id="qv">80</strong></label>
+        <input id="quality" type="range" min="50" max="95" value="80" />
+        <label><input id="resizeToggle" type="checkbox" /> 長辺をリサイズ</label>
+        <input id="maxEdge" type="number" min="320" step="10" value="1600" style="width:100px" disabled /> px
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="convertBtn" disabled>変換開始</button>
+        <button id="zipBtn" disabled>WebPをZIPで一括保存</button>
+        <span class="muted" id="summary">ファイル未選択</span>
+      </div>
+      <table id="resultTable" hidden>
+        <thead><tr><th>ファイル</th><th>元サイズ</th><th>WebPサイズ</th><th>削減率</th><th>保存</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <p class="muted">推奨: SNSサムネは品質 <code>75〜85</code> / 長辺 <code>1200〜1600</code>。</p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    const filesInput = document.getElementById('files');
+    const dropzone = document.getElementById('dropzone');
+    const quality = document.getElementById('quality');
+    const qv = document.getElementById('qv');
+    const resizeToggle = document.getElementById('resizeToggle');
+    const maxEdge = document.getElementById('maxEdge');
+    const convertBtn = document.getElementById('convertBtn');
+    const zipBtn = document.getElementById('zipBtn');
+    const summary = document.getElementById('summary');
+    const resultTable = document.getElementById('resultTable');
+    const tbody = resultTable.querySelector('tbody');
+
+    let selected = [];
+    let converted = [];
+
+    const fmt = n => (n/1024).toFixed(1) + ' KB';
+
+    quality.addEventListener('input', () => qv.textContent = quality.value);
+    resizeToggle.addEventListener('change', () => maxEdge.disabled = !resizeToggle.checked);
+
+    function setFiles(list) {
+      selected = [...list].filter(f => /image\/(png|jpeg)/.test(f.type));
+      converted = [];
+      tbody.innerHTML = '';
+      resultTable.hidden = true;
+      convertBtn.disabled = selected.length === 0;
+      zipBtn.disabled = true;
+      summary.textContent = selected.length ? `${selected.length} 件選択` : 'ファイル未選択';
+    }
+
+    dropzone.addEventListener('click', () => filesInput.click());
+    filesInput.addEventListener('change', e => setFiles(e.target.files));
+
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.style.borderColor = '#78a1ff'; });
+    dropzone.addEventListener('dragleave', () => dropzone.style.borderColor = '#3e4f85');
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#3e4f85';
+      setFiles(e.dataTransfer.files);
+    });
+
+    function fileToImage(file) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = reject;
+        img.src = url;
+      });
+    }
+
+    function canvasToBlob(canvas, q) {
+      return new Promise(resolve => canvas.toBlob(resolve, 'image/webp', q));
+    }
+
+    function downloadBlob(blob, name) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 500);
+    }
+
+    convertBtn.addEventListener('click', async () => {
+      convertBtn.disabled = true;
+      tbody.innerHTML = '';
+      converted = [];
+      const q = Number(quality.value) / 100;
+      const max = Number(maxEdge.value || 1600);
+
+      for (const f of selected) {
+        const img = await fileToImage(f);
+        let w = img.width, h = img.height;
+        if (resizeToggle.checked && Math.max(w, h) > max) {
+          const r = max / Math.max(w, h);
+          w = Math.round(w * r); h = Math.round(h * r);
+        }
+
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        const blob = await canvasToBlob(c, q);
+
+        const outName = f.name.replace(/\.(png|jpe?g)$/i, '') + '.webp';
+        converted.push({ name: outName, blob, original: f.size, webp: blob.size });
+
+        const tr = document.createElement('tr');
+        const saved = ((1 - blob.size / f.size) * 100).toFixed(1) + '%';
+        tr.innerHTML = `<td>${outName}</td><td>${fmt(f.size)}</td><td>${fmt(blob.size)}</td><td>${saved}</td><td><button>保存</button></td>`;
+        tr.querySelector('button').addEventListener('click', () => downloadBlob(blob, outName));
+        tbody.appendChild(tr);
+      }
+
+      resultTable.hidden = false;
+      zipBtn.disabled = converted.length === 0;
+      convertBtn.disabled = false;
+      const totalO = converted.reduce((a,b)=>a+b.original,0);
+      const totalW = converted.reduce((a,b)=>a+b.webp,0);
+      const ratio = ((1 - totalW/totalO) * 100).toFixed(1);
+      summary.textContent = `完了: ${converted.length} 件 / 合計 ${fmt(totalO)} → ${fmt(totalW)}（${ratio} 削減）`;
+    });
+
+    zipBtn.addEventListener('click', async () => {
+      const zip = new JSZip();
+      converted.forEach(c => zip.file(c.name, c.blob));
+      const out = await zip.generateAsync({ type: 'blob' });
+      downloadBlob(out, 'webp-converted.zip');
+    });
+  </script>
+</body>
+</html>
